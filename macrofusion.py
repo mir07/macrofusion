@@ -118,7 +118,7 @@ settings = {
         "misc_args"             : ["-v",        True]
     },
     # algin settings for thumbnails shouldn't include seetings which don't work well on tiny resolutions
-    "align_settings_thumbnail"  : ["-C", "-x", "-y", "-z", "-d", "-i", "-m", "--gpu"],
+    "align_settings_thumbnail"  : ["-C", "-x", "-y", "-z", "-d", "-i", "-m", "--gpu",  "-v"],
     "fuse_settings"             :
     {
         # default compression setting (for JPG/TIFF) 
@@ -998,12 +998,22 @@ class Thread_Preview(threading.Thread):
             print(" ".join(command))
             Gui.statusbar.push(15, _(":: Align photos..."))
             preview_process = subprocess.Popen(command, stdout=subprocess.PIPE)
+            while preview_process.poll() is None:
+            #with preview_process.stdout:
+                for line in iter(preview_process.stdout.readline, b''):
+                    #self.current_lines.append(line.decode("utf-8"))
+                    print(line.decode("utf-8"))
             preview_process.wait()
             Gui.statusbar.pop(15)
         Gui.statusbar.push(15, _(":: Fusing photos..."))
         command = [settings["enfuser"], "-o", os.path.join(settings["preview_folder"], "preview.tif")] + data.get_enfuse_options + images_a_fusionner
         print(" ".join(command))
         preview_process = subprocess.Popen(command, stdout=subprocess.PIPE)
+        while preview_process.poll() is None:
+        #with preview_process.stdout:
+            for line in iter(preview_process.stdout.readline, b''):
+                #self.current_lines.append(line.decode("utf-8"))
+                print(line.decode("utf-8"))
         preview_process.wait()
         Gui.statusbar.pop(15)
         
@@ -1065,6 +1075,10 @@ class Thread_Fusion(threading.Thread):
         if Gui.checkbutton_a5_align.get_active():       
             print(" ".join(self.command_align))
             align_process = subprocess.Popen(self.command_align, stdout=subprocess.PIPE)
+            #while align_process.poll() is None:
+            with align_process.stdout:
+                for line in iter(align_process.stdout.readline, b''):
+                    print(line.decode("utf-8"))
             align_process.wait()
         
             if Gui.checkbuttonalignfiles.get_active():
@@ -1092,14 +1106,20 @@ class Thread_Fusion(threading.Thread):
 
         print(" ".join(self.command_fuse))
         fusion_process = subprocess.Popen(self.command_fuse, stdout=subprocess.PIPE)
+        #while fusion_process.poll() is None:
+        with fusion_process.stdout:
+            for line in iter(fusion_process.stdout.readline, b''):
+                print(line.decode("utf-8"))
         fusion_process.wait()
         
         if Gui.checkbuttonexif.get_active():
             exif_copy = subprocess.Popen(["exiftool", "-tagsFromFile", Gui.list_images[0], "-overwrite_original", Gui.name])
             exif_copy.wait()
         if len(self.issend) > 0:
-            subprocess.Popen([Gui.entryedit_field.get_text(), self.issend], stdout=subprocess.PIPE)
-
+            finish = subprocess.Popen([Gui.entryedit_field.get_text(), self.issend], stdout=subprocess.PIPE)
+            with finish.stdout:
+                for line in iter(finish.stdout.readline, b''):
+                    print(line.decode("utf-8"))
 
 ########################################    
 #### Classe de la fenêtre a propos  ####
