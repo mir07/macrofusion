@@ -116,7 +116,7 @@ settings = {
         "misc_args"             : ["-v",        True]
     },
     # algin settings for thumbnails shouldn't include seetings which don't work well on tiny resolutions
-    "align_settings_thumbnail"  : ["-C", "-x", "-y", "-z", "-d", "-i", "-m", "--gpu",  "-v"],
+    "align_settings_thumbnail"  : ["-C", "-x", "-y", "-z", "-d", "-i", "-m", "--gpu"],
     "fuse_settings"             :
     {
         # default compression setting (for JPG/TIFF) 
@@ -968,25 +968,23 @@ class Thread_Preview(threading.Thread):
             images_a_fusionner = images_a_align
         if Gui.checkbutton_a5_align.get_active():
             command = ["align_image_stack", "-a", os.path.join(settings["preview_folder"], "test")] + data.get_align_options(low_resolution=True) + images_a_align
-            print(" ".join(command))
+            print("cmd: ", " ".join(command))
             Gui.statusbar.push(15, _(":: Align photos..."))
             preview_process = subprocess.Popen(command, stdout=subprocess.PIPE)
             while preview_process.poll() is None:
-            #with preview_process.stdout:
-                for line in iter(preview_process.stdout.readline, b''):
-                    #self.current_lines.append(line.decode("utf-8"))
-                    print(line.decode("utf-8"))
+                sout = preview_process.stdout.readline().decode('utf-8').rstrip()
+                if sout:
+                    print(sout.strip())
             preview_process.wait()
             Gui.statusbar.pop(15)
         Gui.statusbar.push(15, _(":: Fusing photos..."))
         command = [settings["enfuser"], "-o", os.path.join(settings["preview_folder"], "preview.tif")] + data.get_enfuse_options + images_a_fusionner
-        print(" ".join(command))
+        print("cmd: ", " ".join(command))
         preview_process = subprocess.Popen(command, stdout=subprocess.PIPE)
         while preview_process.poll() is None:
-        #with preview_process.stdout:
-            for line in iter(preview_process.stdout.readline, b''):
-                #self.current_lines.append(line.decode("utf-8"))
-                print(line.decode("utf-8"))
+            sout = preview_process.stdout.readline().decode('utf-8').rstrip()
+            if sout:
+                print(sout.strip())
         preview_process.wait()
         Gui.statusbar.pop(15)
         
@@ -1045,12 +1043,12 @@ class Thread_Fusion(threading.Thread):
         
     def run(self):
         if Gui.checkbutton_a5_align.get_active():       
-            print(" ".join(self.command_align))
-            align_process = subprocess.Popen(self.command_align, stdout=subprocess.PIPE)
-            #while align_process.poll() is None:
-            with align_process.stdout:
-                for line in iter(align_process.stdout.readline, b''):
-                    print(line.decode("utf-8"))
+            print("cmd: ", " ".join(self.command_align))
+            align_process = subprocess.Popen(self.command_align, shell=False, stdout=subprocess.PIPE)
+            while align_process.poll() is None:
+                sout = align_process.stdout.readline().rstrip().decode('utf-8')
+                if sout:
+                    print(sout.strip())
             align_process.wait()
         
             if Gui.checkbuttonalignfiles.get_active():
@@ -1068,7 +1066,14 @@ class Thread_Fusion(threading.Thread):
                     # if user wants to export a fused JPG we also give him aligned JPGs
                     if Gui.name.endswith(('.jpg', '.jpeg', '.JPG', '.JPEG')):
                         command = ["mogrify", "-format", "jpg", "-quality", "100", new_filename ]
-                        output  = subprocess.Popen(command).communicate()[0]
+                        print("cmd: ", " ".join(command))
+                        #output  = subprocess.Popen(command).communicate()[0]
+                        output  = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE)
+                        while output.poll() is None:
+                            sout = output.stdout.readline().rstrip().decode('utf-8')
+                            if output:
+                                print(sout.strip())
+                        output.wait()
                         new_filename = os.path.splitext(new_filename)[0] + ".jpg"
                         
                     if os.path.exists(new_filename_dst):
@@ -1076,22 +1081,33 @@ class Thread_Fusion(threading.Thread):
                     shutil.move(new_filename, new_filename_dst)
                     count += 1
 
-        print(" ".join(self.command_fuse))
-        fusion_process = subprocess.Popen(self.command_fuse, stdout=subprocess.PIPE)
-        #while fusion_process.poll() is None:
-        with fusion_process.stdout:
-            for line in iter(fusion_process.stdout.readline, b''):
-                print(line.decode("utf-8"))
+        print("cmd: ".join(self.command_fuse))
+        fusion_process = subprocess.Popen(self.command_fuse, shell=False, stdout=subprocess.PIPE)
+        while fusion_process.poll() is None:
+            sout = fusion_process.stdout.readline().rstrip().decode('utf-8')
+            if sout:
+                print(sout.strip())
         fusion_process.wait()
         
         if Gui.checkbuttonexif.get_active():
-            exif_copy = subprocess.Popen(["exiftool", "-tagsFromFile", Gui.list_images[0], "-overwrite_original", Gui.name])
+            command = ["exiftool", "-tagsFromFile", Gui.list_images[0], "-overwrite_original", Gui.name]
+            print("cmd: ", " ".join(command))
+            exif_copy = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE)
+            while exif_copy.poll() is None:
+                sout = exif_copy.stdout.readline().rstrip().decode('utf-8')
+                if sout:
+                    print(sout.strip())
             exif_copy.wait()
         if len(self.issend) > 0:
-            finish = subprocess.Popen([Gui.entryedit_field.get_text(), self.issend], stdout=subprocess.PIPE)
-            with finish.stdout:
-                for line in iter(finish.stdout.readline, b''):
-                    print(line.decode("utf-8"))
+            command = [Gui.entryedit_field.get_text(), self.issend]
+            print("cmd: ", " ".join(command))
+            issend_process = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE)
+            while issend_process.poll() is None:
+                sout = issend_process.stdout.readline().rstrip().decode('utf-8')
+                if sout:
+                    print(sout.strip())
+            issend_process.wait()
+
 
 ########################################    
 #### Classe de la fenêtre a propos  ####
