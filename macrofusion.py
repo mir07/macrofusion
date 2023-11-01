@@ -356,6 +356,7 @@ class Interface:
         self.check_hardmask.set_active(settings["fuse_settings"]["hard-mask"][1])
 
         self.check_contwin = self.gui.get_object("check_contwin")
+        self.check_contwin.set_active(settings["fuse_settings"]["contrast-window-size"][1])
         self.spinbuttoncontwin = self.gui.get_object("spinbuttoncontwin")
         self.spinbuttoncontwin.set_value(settings["fuse_settings"]["contrast-window-size"][1])
         
@@ -392,6 +393,7 @@ class Interface:
         self.combobox_desatmet.set_active(settings["fuse_settings"]["gray-projector"][1])
         
         self.check_corrthres = self.gui.get_object("check_corrthres")
+        self.check_corrthres.set_active(settings["align_settings"]["corr_thres"][1])
         self.spinbuttoncorrthres = self.gui.get_object("spinbuttoncorrthres")
         self.ajus_corrthres = Gtk.Adjustment(value=0.9, lower=0, upper=1, step_increment=0.1, page_increment=0.1, page_size=0)
         self.spinbuttoncorrthres.set_adjustment(self.ajus_corrthres)
@@ -399,10 +401,12 @@ class Interface:
         self.spinbuttoncorrthres.set_value(settings["align_settings"]["corr_thres"][1])
 
         self.check_pnt = self.gui.get_object("check_pnt")
+        self.check_pnt.set_active(settings["align_settings"]["num_ctrl_pnt"][1])
         self.spinbuttonpnt = self.gui.get_object("spinbuttonpnt")
         self.spinbuttonpnt.set_value(int(settings["align_settings"]["num_ctrl_pnt"][1]))
 
         self.check_pntthr = self.gui.get_object("check_pntthr")
+        self.check_pntthr.set_active(settings["align_settings"]["ctrl_pnt_thr"][1])
         self.spinbuttonpntthr = self.gui.get_object("spinbuttonpntthr")
         self.spinbuttonpntthr.set_value(int(settings["align_settings"]["ctrl_pnt_thr"][1]))
 
@@ -1141,13 +1145,11 @@ class Thread_Fusion(threading.Thread):
                     count += 1
 
         cmd = "cmd: " + " ".join(self.command_fuse)
-        print(cmd + "\n")
         self.fusion_queue.put(cmd + "\n")
         fusion_process = subprocess.Popen(self.command_fuse, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         while fusion_process.poll() is None:
             sout = fusion_process.stdout.readline().rstrip().decode('utf-8')
             if sout:
-                print(sout + "\n")
                 self.fusion_queue.put(sout + "\n")
         fusion_process.wait()
         
