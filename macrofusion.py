@@ -25,6 +25,7 @@ try:
     import signal
     import tempfile
     import locale
+    from queue import Queue
     from gi import require_version
     require_version('Gtk', '3.0')
     require_version('GLib', '2.0')
@@ -346,7 +347,7 @@ class Interface:
 
         #valeurs des options et configurations :
         self.check_pyramidelevel = self.gui.get_object("check_pyramidelevel")
-        self.check_pyramidelevel.set_active(0)
+        self.check_pyramidelevel.set_active(settings["fuse_settings"]["levels"][1])
 
         self.spinbuttonlevel = self.gui.get_object("spinbuttonlevel")
         self.spinbuttonlevel.set_value(settings["fuse_settings"]["levels"][1])
@@ -598,12 +599,31 @@ class Interface:
             
     def clear(self, widget):
         self.liststoreimport.clear()
-            
+ 
+    def preview_close_progress(self, widget):
+        self.preview_progress_win.destroy()
+ 
     def preview(self, widget):
         self.size = (self.spinbuttonlargeurprev.get_value(), self.spinbuttonhauteurprev.get_value())
         self.name = os.path.join(settings["preview_folder"], "preview.tif")
         item = 0
         if len(self.liststoreimport) > 0:
+            self.preview_progress = Gtk.Builder()
+            self.preview_progress.add_from_file(UI + "progress.xml")
+            self.preview_progress_win = self.preview_progress.get_object("dialog1")
+            self.preview_progress_stop_button = self.preview_progress.get_object("stop_button")
+            self.preview_dic1 = { "on_stop_button_clicked"  : self.preview_close_progress, 
+                                  "on_dialog1_destroy"      : self.preview_close_progress }
+            self.preview_progress.connect_signals(self.preview_dic1)
+            self.preview_info_label = self.preview_progress.get_object("info_label")
+            self.preview_info_label.set_text(_('Fusing images...'))
+            self.preview_msg_window = self.preview_progress.get_object("msg_window")
+            self.preview_msg_window.connect("size_allocate", self.preview_msg_window_changed)
+            self.preview_logview = self.preview_progress.get_object("log_view")
+            self.preview_textbuffer = self.preview_logview.get_buffer()
+            self.preview_queue = Queue()
+            GLib.timeout_add(interval=250, function=self.preview_update_widget)
+
             self.ref = list(zip(*self.liststoreimport))[0] 
             for item2 in self.ref:
                 if item2:
@@ -611,7 +631,7 @@ class Interface:
                     if item>1:
                         self.update_align_options()
                         self.update_enfuse_options()
-                        self.thread_preview = Thread_Preview(self.size, self.liststoreimport) 
+                        self.thread_preview = Thread_Preview(self.size, self.liststoreimport, self.preview_queue) 
                         self.thread_preview.start()
                         timer = GLib.timeout_add (100, self.pulsate)
                         break
@@ -792,6 +812,20 @@ class Interface:
         self.update_align_options()
         self.update_enfuse_options()
         ProFus = Progress_Fusion(self.name, self.list_images, self.list_aligned, self.issend)
+    
+    def preview_msg_window_changed(self, widget, event, data=None):
+        adj = self.preview_msg_window.get_vadjustment()
+        adj.set_value(adj.get_upper() - adj.get_page_size())
+        
+    def preview_update_widget(self):
+        if not self.thread_preview.is_alive() and self.preview_queue.empty():
+            self.preview_close_progress(self)
+            return False
+        while not self.preview_queue.empty():
+            text = self.preview_queue.get_nowait()
+            end_iter = self.preview_textbuffer.get_end_iter()
+            self.preview_textbuffer.insert(end_iter, text)
+        return True
         
     def apropos(self, widget):
         dialog = Apropos_Dialog(self.win)
@@ -946,10 +980,11 @@ class SaveFiles_Dialog:
 #####################################################################
             
 class Thread_Preview(threading.Thread):
-    def __init__(self, size, list):
+    def __init__(self, size, list, queue):
         threading.Thread.__init__ (self)
         self.size = size
         self.list = list
+        self.preview_queue = queue
             
     def run(self):
         images_a_fusionner = []
@@ -967,24 +1002,26 @@ class Thread_Preview(threading.Thread):
         if not Gui.checkbutton_a5_align.get_active():
             images_a_fusionner = images_a_align
         if Gui.checkbutton_a5_align.get_active():
-            command = ["align_image_stack", "-a", os.path.join(settings["preview_folder"], "test")] + data.get_align_options(low_resolution=True) + images_a_align
-            print("cmd: ", " ".join(command))
+            command = ["align_image_stack", "-v",  "-a", os.path.join(settings["preview_folder"], "test")] + data.get_align_options(low_resolution=True) + images_a_align
+            cmd = "cmd: " + " ".join(command)
+            self.preview_queue.put(cmd + "\n")
             Gui.statusbar.push(15, _(":: Align photos..."))
-            preview_process = subprocess.Popen(command, stdout=subprocess.PIPE)
+            preview_process = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             while preview_process.poll() is None:
                 sout = preview_process.stdout.readline().decode('utf-8').rstrip()
                 if sout:
-                    print(sout.strip())
+                    self.preview_queue.put(sout + "\n")
             preview_process.wait()
             Gui.statusbar.pop(15)
         Gui.statusbar.push(15, _(":: Fusing photos..."))
         command = [settings["enfuser"], "-o", os.path.join(settings["preview_folder"], "preview.tif")] + data.get_enfuse_options + images_a_fusionner
-        print("cmd: ", " ".join(command))
-        preview_process = subprocess.Popen(command, stdout=subprocess.PIPE)
+        cmd = "cmd: " + " ".join(command)
+        self.preview_queue.put(cmd + "\n")
+        preview_process = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         while preview_process.poll() is None:
             sout = preview_process.stdout.readline().decode('utf-8').rstrip()
             if sout:
-                print(sout.strip())
+                self.preview_queue.put(sout + "\n")
         preview_process.wait()
         Gui.statusbar.pop(15)
         
@@ -1002,14 +1039,33 @@ class Progress_Fusion:
         self.info_label = self.progress.get_object("info_label")
         self.progress_bar = self.progress.get_object("progressbar1")
         self.progress_stop_button = self.progress.get_object("stop_button")
-        self.dic1 = { "on_stop_button_clicked"  : self.close_progress, 
-                      "on_dialog1_destroy"      : self.close_progress }
+        self.dic1 = { "on_stop_button_clicked"  : self.fusion_close_progress, 
+                      "on_dialog1_destroy"      : self.fusion_close_progress }
         self.progress.connect_signals(self.dic1)        
         self.info_label.set_text(_('Fusing images...'))
+        self.fusion_msg_window = self.progress.get_object("msg_window")
+        self.fusion_msg_window.connect("size_allocate", self.fusion_msg_window_changed)
+        self.fusion_logview = self.progress.get_object("log_view")
+        self.fusion_textbuffer = self.fusion_logview.get_buffer()
+        self.fusion_queue = Queue()
        
-        self.thread_fusion = Thread_Fusion(name, list, list_aligned, issend)
+        GLib.timeout_add(interval=250, function=self.fusion_update_widget)
+        self.thread_fusion = Thread_Fusion(name, list, list_aligned, issend, self.fusion_queue)
         self.thread_fusion.start()
         timer = GLib.timeout_add (100, self.pulsate)
+    
+    def fusion_msg_window_changed(self, widget, event, data=None):
+        adj = self.fusion_msg_window.get_vadjustment()
+        adj.set_value(adj.get_upper() - adj.get_page_size())
+        
+    def fusion_update_widget(self):
+        if not self.thread_fusion.is_alive() and self.fusion_queue.empty():
+            return False
+        while not self.fusion_queue.empty():
+            text = self.fusion_queue.get_nowait()
+            end_iter = self.fusion_textbuffer.get_end_iter()
+            self.fusion_textbuffer.insert(end_iter, text)
+        return True
         
     def pulsate(self):
         if self.thread_fusion.is_alive():
@@ -1019,10 +1075,11 @@ class Progress_Fusion:
         else:
             self.progress_bar.set_fraction(1)
             self.progress_bar.set_text(_("Fused !"))
-            self.close_progress(self)
+            self.fusion_close_progress(self)
             return False
             
-    def close_progress(self, widget):
+    def fusion_close_progress(self, widget):
+        """"""
         self.progress_win.destroy()
             
             
@@ -1032,23 +1089,25 @@ class Progress_Fusion:
 ##############################################################################
 
 class Thread_Fusion(threading.Thread):
-    def __init__(self, name, img_list, img_list_aligned, issend):
+    def __init__(self, name, img_list, img_list_aligned, issend, queue):
         threading.Thread.__init__ (self)
         self.issend = issend
         self.name = name
         self.img_list = img_list
         self.img_list_aligned = img_list_aligned
-        self.command_fuse  = [data.get_all_settings["enfuser"], "-o", self.name] + data.get_enfuse_options + self.img_list_aligned
-        self.command_align = ["align_image_stack", '-a', os.path.join(settings["preview_folder"], settings["align_prefix"])] + data.get_align_options() + self.img_list
-        
+        self.command_fuse  = [data.get_all_settings["enfuser"], "-v", "-o", self.name] + data.get_enfuse_options + self.img_list_aligned
+        self.command_align = ["align_image_stack", "-v", "-a", os.path.join(settings["preview_folder"], settings["align_prefix"])] + data.get_align_options() + self.img_list
+        self.fusion_queue = queue
+    
     def run(self):
-        if Gui.checkbutton_a5_align.get_active():       
-            print("cmd: ", " ".join(self.command_align))
-            align_process = subprocess.Popen(self.command_align, shell=False, stdout=subprocess.PIPE)
+        if Gui.checkbutton_a5_align.get_active():
+            cmd = "cmd: " + " ".join(self.command_align)
+            self.fusion_queue.put(cmd + "\n")
+            align_process = subprocess.Popen(self.command_align, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             while align_process.poll() is None:
                 sout = align_process.stdout.readline().rstrip().decode('utf-8')
                 if sout:
-                    print(sout.strip())
+                    self.fusion_queue.put(sout + "\n")
             align_process.wait()
         
             if Gui.checkbuttonalignfiles.get_active():
@@ -1065,14 +1124,14 @@ class Thread_Fusion(threading.Thread):
                     shutil.copy(tmp_filename, new_filename)
                     # if user wants to export a fused JPG we also give him aligned JPGs
                     if Gui.name.endswith(('.jpg', '.jpeg', '.JPG', '.JPEG')):
-                        command = ["mogrify", "-format", "jpg", "-quality", "100", new_filename ]
-                        print("cmd: ", " ".join(command))
-                        #output  = subprocess.Popen(command).communicate()[0]
-                        output  = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE)
+                        command = ["mogrify", "-format", "jpg", "-quality", "100", new_filename]
+                        cmd = "cmd: " + " ".join(command)
+                        self.fusion_queue.put(cmd)
+                        output  = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                         while output.poll() is None:
                             sout = output.stdout.readline().rstrip().decode('utf-8')
-                            if output:
-                                print(sout.strip())
+                            if sout:
+                                self.fusion_queue.put(sout + "\n")
                         output.wait()
                         new_filename = os.path.splitext(new_filename)[0] + ".jpg"
                         
@@ -1081,33 +1140,37 @@ class Thread_Fusion(threading.Thread):
                     shutil.move(new_filename, new_filename_dst)
                     count += 1
 
-        print("cmd: ".join(self.command_fuse))
-        fusion_process = subprocess.Popen(self.command_fuse, shell=False, stdout=subprocess.PIPE)
+        cmd = "cmd: " + " ".join(self.command_fuse)
+        print(cmd + "\n")
+        self.fusion_queue.put(cmd + "\n")
+        fusion_process = subprocess.Popen(self.command_fuse, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         while fusion_process.poll() is None:
             sout = fusion_process.stdout.readline().rstrip().decode('utf-8')
             if sout:
-                print(sout.strip())
+                print(sout + "\n")
+                self.fusion_queue.put(sout + "\n")
         fusion_process.wait()
         
         if Gui.checkbuttonexif.get_active():
             command = ["exiftool", "-tagsFromFile", Gui.list_images[0], "-overwrite_original", Gui.name]
-            print("cmd: ", " ".join(command))
-            exif_copy = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE)
+            cmd = "cmd: " + " ".join(command)
+            self.fusion_queue.put(cmd + "\n")
+            exif_copy = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             while exif_copy.poll() is None:
                 sout = exif_copy.stdout.readline().rstrip().decode('utf-8')
                 if sout:
-                    print(sout.strip())
+                    self.fusion_queue.put(sout + "\n")
             exif_copy.wait()
         if len(self.issend) > 0:
             command = [Gui.entryedit_field.get_text(), self.issend]
-            print("cmd: ", " ".join(command))
-            issend_process = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE)
+            cmd = "cmd: " + " ".join(command)
+            self.fusion_queue.put(cmd + "\n")
+            issend_process = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             while issend_process.poll() is None:
                 sout = issend_process.stdout.readline().rstrip().decode('utf-8')
                 if sout:
-                    print(sout.strip())
+                    self.fusion_queue.put(sout + "\n")
             issend_process.wait()
-
 
 ########################################    
 #### Classe de la fenêtre a propos  ####
